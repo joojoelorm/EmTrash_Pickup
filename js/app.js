@@ -45,15 +45,18 @@ async function syncFromServer({ notify = false } = {}) {
     const remote = await loadRemoteState();
     state = mergeRemoteState(state, remote);
     saveState(state);
-    if (!isAuthScreenOpen()) render();
+    if (!shouldDeferRenderForInput()) render();
     if (notify) showToast("Synced with server");
   } catch {
     if (notify) showToast("Server sync unavailable");
   }
 }
 
-function isAuthScreenOpen() {
-  return !currentUser() && Boolean(document.querySelector("#resident-form, #collector-form, #login-phone"));
+function shouldDeferRenderForInput() {
+  const active = document.activeElement;
+  const isEditing = active?.matches?.("input, textarea, select");
+  const authOpen = Boolean(document.querySelector("#resident-form, #collector-form, #login-phone"));
+  return Boolean(isEditing || authOpen);
 }
 
 function showToast(msg, duration = 2800) {
@@ -966,5 +969,5 @@ document.getElementById("btn-logout").addEventListener("click", () => {
 render();
 syncFromServer();
 setInterval(() => {
-  if (!document.hidden && currentUser()) syncFromServer();
+  if (!document.hidden && currentUser() && !shouldDeferRenderForInput()) syncFromServer();
 }, 7000);
