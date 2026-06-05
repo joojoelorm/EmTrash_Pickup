@@ -53,7 +53,7 @@ async function syncFromServer({ notify = false } = {}) {
 }
 
 function isAuthScreenOpen() {
-  return !state.sessionUserId && Boolean(document.querySelector("#resident-form, #collector-form, #login-phone"));
+  return !currentUser() && Boolean(document.querySelector("#resident-form, #collector-form, #login-phone"));
 }
 
 function showToast(msg, duration = 2800) {
@@ -966,5 +966,5 @@ document.getElementById("btn-logout").addEventListener("click", () => {
 render();
 syncFromServer();
 setInterval(() => {
-  if (!document.hidden && state.sessionUserId) syncFromServer();
+  if (!document.hidden && currentUser()) syncFromServer();
 }, 7000);
