@@ -1,4 +1,4 @@
-﻿import { CONFIG, formatGhs, calcFees } from "./config.js";
+import { CONFIG, formatGhs, calcFees } from "./config.js";
 import {
   loadState, saveState, loadRemoteState, saveRemoteState, mergeRemoteState,
   uid, getUser, seedDemoIfEmpty,
@@ -45,11 +45,15 @@ async function syncFromServer({ notify = false } = {}) {
     const remote = await loadRemoteState();
     state = mergeRemoteState(state, remote);
     saveState(state);
-    render();
+    if (!isAuthScreenOpen()) render();
     if (notify) showToast("Synced with server");
   } catch {
     if (notify) showToast("Server sync unavailable");
   }
+}
+
+function isAuthScreenOpen() {
+  return !state.sessionUserId && Boolean(document.querySelector("#resident-form, #collector-form, #login-phone"));
 }
 
 function showToast(msg, duration = 2800) {
@@ -962,5 +966,5 @@ document.getElementById("btn-logout").addEventListener("click", () => {
 render();
 syncFromServer();
 setInterval(() => {
-  if (!document.hidden) syncFromServer();
+  if (!document.hidden && state.sessionUserId) syncFromServer();
 }, 7000);
