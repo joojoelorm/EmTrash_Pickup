@@ -96,9 +96,6 @@ function renderAuth() {
 
   const prefillJoin = joinCodeFromUrl();
   const collectors = getCollectors(state);
-  const collectorOptions = collectors
-    .map((c) => `<option value="${escapeAttr(c.joinCode)}">${escapeAttr(c.name)} — ${escapeAttr(c.serviceArea || c.address || "Area")}</option>`)
-    .join("");
 
   const main = document.getElementById("main");
   main.innerHTML = `
@@ -116,12 +113,10 @@ function renderAuth() {
       <input id="resident-phone" required type="tel" placeholder="024 / 055 / 020" />
       <label for="join-code">Collector code</label>
       <input id="join-code" placeholder="e.g. KWAME1 — ask your collector" value="${escapeAttr(prefillJoin)}" />
-        ${collectors.length ? `
-          <label for="pick-collector">Or pick your collector</label>
-          <select id="pick-collector">
-            <option value="">— Select —</option>
-            ${collectorOptions}
-          </select>` : ""}
+      <label for="pick-collector">Or pick your collector</label>
+      <select id="pick-collector">
+        <option value="">— Select —</option>
+      </select>
       <label for="address">Home / pickup address</label>
       <input id="address" required placeholder="Area, landmark, house number" />
       <p class="muted">Drag the pin to your exact location.</p>
@@ -164,10 +159,13 @@ function renderAuth() {
     lat: draftLat, lng: draftLng, draggable: true,
     onMove: (la, ln) => { draftLat = la; draftLng = ln; },
   });
+  refreshCollectorPicker();
 
   main.querySelector("#pick-collector")?.addEventListener("change", (e) => {
     if (e.target.value) main.querySelector("#join-code").value = e.target.value;
   });
+  main.querySelector("#pick-collector")?.addEventListener("focus", () => refreshCollectorsForPicker());
+  main.querySelector("#join-code")?.addEventListener("focus", () => refreshCollectorsForPicker());
 
   main.querySelector("#btn-gps")?.addEventListener("click", async () => {
     try {
@@ -239,6 +237,7 @@ function renderAuth() {
     activeTab = "home";
     showToast(`Registered — your collector code is ${joinCode}`);
     persist();
+    refreshCollectorPicker();
   });
 
   main.querySelector("#btn-login").addEventListener("click", () => {
@@ -249,6 +248,29 @@ function renderAuth() {
     activeTab = "home";
     persist();
   });
+}
+
+function refreshCollectorPicker() {
+  const select = document.querySelector("#pick-collector");
+  if (!select) return;
+  const current = select.value;
+  const collectors = getCollectors(state);
+  select.innerHTML = `
+    <option value="">${collectors.length ? "— Select —" : "No collectors yet"}</option>
+    ${collectors.map((c) => `<option value="${escapeAttr(c.joinCode)}">${escapeHtml(c.name)} — ${escapeHtml(c.serviceArea || c.address || "Area")}</option>`).join("")}
+  `;
+  if (collectors.some((c) => c.joinCode === current)) select.value = current;
+}
+
+async function refreshCollectorsForPicker() {
+  try {
+    const remote = await loadRemoteState();
+    state = mergeRemoteState(state, remote);
+    saveState(state);
+    refreshCollectorPicker();
+  } catch {
+    refreshCollectorPicker();
+  }
 }
 
 // ═══════════════════════════════════════════
