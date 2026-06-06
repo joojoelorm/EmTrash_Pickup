@@ -1,4 +1,5 @@
 import { CONFIG } from "./config.js";
+import { GEO_CONFIG } from "./geo-config.js";
 
 let mapInstance = null;
 
@@ -48,7 +49,39 @@ export function setMarkerPosition(marker, lat, lng) {
 export async function geocodeAddress(query) {
   const q = String(query || "").trim();
   if (!q) throw new Error("Enter a landmark or address");
+  if (GEO_CONFIG.geoapifyKey) return geocodeWithGeoapify(q);
+  return geocodeWithNominatim(q);
+}
 
+async function geocodeWithGeoapify(q) {
+  const attempts = [q, `${q}, Ghana`, `${q}, Accra, Ghana`];
+
+  for (const text of attempts) {
+    const url = new URL("https://api.geoapify.com/v1/geocode/search");
+    url.searchParams.set("text", text);
+    url.searchParams.set("filter", "countrycode:gh");
+    url.searchParams.set("bias", `proximity:${CONFIG.defaultCenter.lng},${CONFIG.defaultCenter.lat}`);
+    url.searchParams.set("limit", "1");
+    url.searchParams.set("apiKey", GEO_CONFIG.geoapifyKey);
+
+    const res = await fetch(url.toString());
+    if (!res.ok) throw new Error("Location search failed");
+    const data = await res.json();
+    const match = data.features?.[0];
+    if (match) {
+      const [lng, lat] = match.geometry.coordinates;
+      return {
+        lat: Number(lat),
+        lng: Number(lng),
+        label: match.properties.formatted || text,
+      };
+    }
+  }
+
+  throw new Error("No matching location found");
+}
+
+async function geocodeWithNominatim(q) {
   const attempts = [
     { q, countrycodes: "gh" },
     { q: `${q}, Ghana`, countrycodes: "gh" },
@@ -98,7 +131,7 @@ export function initCollectorMap(containerId, pickups, users) {
     const resident = users.find((u) => u.id === p.residentId);
     if (!resident?.lat) return;
     const color =
-      p.status === "requested" ? "#f4b400" : p.status === "collected" ? "#12875a" : "#5c5c5c";
+      p.status === "requested" ? "#f4b400" : p.status === "paid" ? "#12875a" : "#5c5c5c";
     L.circleMarker([resident.lat, resident.lng], {
       radius: 10,
       fillColor: color,
