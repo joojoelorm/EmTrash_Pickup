@@ -7,6 +7,7 @@ const API_STATE_URL = "/api/state";
 const defaultState = () => ({
   users: [],
   pickups: [],
+  notifications: [],
   sessionUserId: null,
 });
 
@@ -49,6 +50,7 @@ export function publicState(state) {
   return {
     users: Array.isArray(state.users) ? state.users : [],
     pickups: Array.isArray(state.pickups) ? state.pickups : [],
+    notifications: Array.isArray(state.notifications) ? state.notifications : [],
   };
 }
 
@@ -189,7 +191,7 @@ export function seedDemoIfEmpty(state) {
     {
       id: uid(),
       role: "admin",
-      name: "BinRoute Operator",
+      name: "Emtrash Operator",
       phone: "0500000000",
     },
     {
