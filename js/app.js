@@ -217,6 +217,8 @@ function renderAuth() {
       </select>
       <label for="address">Home / pickup address or landmark</label>
       <input id="address" required placeholder="e.g. Labone Coffee Shop, Osu Oxford Street" />
+      <label for="pickup-instructions">Pickup instructions (optional)</label>
+      <textarea id="pickup-instructions" placeholder="e.g. Bin is by the blue gate. Collector can pick up even if I am not home."></textarea>
       <button type="button" class="btn btn-secondary" id="btn-search-location">Search landmark on map</button>
       <p class="muted">Tap the map or drag the pin to your exact pickup location.</p>
       <div id="map"></div>
@@ -283,6 +285,7 @@ function renderAuth() {
 
   main.querySelector("#btn-search-location")?.addEventListener("click", async () => {
     const address = main.querySelector("#address").value.trim();
+    const pickupInstructions = main.querySelector("#pickup-instructions").value.trim();
     if (!address) { showToast("Enter a landmark or address first"); return; }
     try {
       showToast("Searching map...");
@@ -325,7 +328,7 @@ function renderAuth() {
     }
     state.users.push({
       id: uid(), role: "resident", name, phone, address,
-      collectorId: collector.id, lat: draftLat, lng: draftLng,
+      pickupInstructions, collectorId: collector.id, lat: draftLat, lng: draftLng,
     });
     notifyUser(collector.id, `${name} joined your customer list`);
     showToast(`Joined ${collector.name}'s customers`);
@@ -480,6 +483,7 @@ function renderResidentHome(user) {
     <div class="screen-header">
       <h1>Hello, ${escapeHtml(user.name.split(" ")[0])} 👋</h1>
       <p class="muted">${escapeHtml(user.address)}</p>
+      ${user.pickupInstructions ? `<p class="muted">Pickup note: ${escapeHtml(user.pickupInstructions)}</p>` : ""}
     </div>
     ${collectorCard}
     ${statusBlock}
@@ -567,8 +571,10 @@ function renderResidentProfile(user) {
     </div>
     <label>Address or landmark</label>
     <input id="prof-address" value="${escapeAttr(user.address)}" />
+    <label>Pickup instructions</label>
+    <textarea id="prof-instructions" placeholder="Where is the bin? Can collector pick it if you are away?">${escapeHtml(user.pickupInstructions || "")}</textarea>
     <button type="button" class="btn btn-secondary" id="btn-search-profile-location">Search landmark on map</button>
-    <p class="muted">Drag the pin to your exact gate / front door.</p>
+    <p class="muted">This saved pickup point is where the collector goes, even if you are not home. Tap the map or drag the pin to the exact bin/gate location.</p>
     <div id="map"></div>
     <p class="muted" id="location-status">Selected: ${Number(user.lat || CONFIG.defaultCenter.lat).toFixed(5)}, ${Number(user.lng || CONFIG.defaultCenter.lng).toFixed(5)}</p>
     <button type="button" class="btn btn-secondary" id="btn-gps">📍 Use GPS</button>
@@ -587,7 +593,7 @@ function renderResidentProfile(user) {
 function bindResidentProfile(user) {
   draftLat = user.lat || CONFIG.defaultCenter.lat;
   draftLng = user.lng || CONFIG.defaultCenter.lng;
-  draftLocationSelected = Boolean(user.lat && user.lng);
+  draftLocationSelected = true;
   mapRef = initMap("map", {
     lat: draftLat, lng: draftLng, draggable: true,
     onMove: (la, ln) => {
@@ -624,10 +630,10 @@ function bindResidentProfile(user) {
     } catch { showToast("GPS unavailable — drag the pin"); }
   });
   main.querySelector("#btn-save-profile").addEventListener("click", () => {
-    if (!draftLocationSelected) { showToast("Tap the map, search a landmark, or use GPS first"); return; }
     user.address = main.querySelector("#prof-address").value.trim();
+    user.pickupInstructions = main.querySelector("#prof-instructions").value.trim();
     user.lat = draftLat; user.lng = draftLng;
-    showToast("Location saved ✓");
+    showToast("Pickup location saved ✓");
     persist();
   });
   main.querySelector("#btn-switch-collector")?.addEventListener("click", () => {
@@ -693,6 +699,7 @@ function renderCollectorPickupRow(p) {
         <div>
           <strong>${escapeHtml(resident.name)}</strong>
           <p class="muted">${escapeHtml(resident.address)} · ${escapeHtml(resident.phone)}</p>
+          ${resident.pickupInstructions ? `<p class="muted note-text">📌 ${escapeHtml(resident.pickupInstructions)}</p>` : ""}
           ${p.note ? `<p class="muted note-text">📝 ${escapeHtml(p.note)}</p>` : ""}
         </div>
         <span class="status-pill status-${p.status}">${STATUS_LABELS[p.status]}</span>
