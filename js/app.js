@@ -6,15 +6,17 @@ import {
 } from "./storage.js";
 import { getAssignedCollector, joinLink, joinCodeFromUrl, pickupsForCollector } from "./assign.js";
 import {
-  destroyMap, initMap, setMarkerPosition, initCollectorMap, openDirections, getCurrentPosition,
+  destroyMap, initMap, setMarkerPosition, initCollectorMap, initTrackingMap, openDirections, getCurrentPosition, geocodeAddress,
 } from "./map.js";
 
 let state = seedDemoIfEmpty(loadState());
 saveState(state);
 let draftLat = CONFIG.defaultCenter.lat;
 let draftLng = CONFIG.defaultCenter.lng;
+let draftLocationSelected = false;
 let mapRef = null;
 let activeTab = "home";
+let soundUnlocked = false;
 
 const STATUS_LABELS = {
   requested:  "Waiting for collector",
@@ -28,6 +30,64 @@ const STATUS_LABELS = {
 };
 
 const MOMO_NETWORKS = ["MTN MoMo", "Telecel Cash", "AirtelTigo Money"];
+
+function notifyUser(userId, message, pickupId = null) {
+  if (!userId) return;
+  state.notifications ||= [];
+  state.notifications.unshift({
+    id: uid(),
+    userId,
+    pickupId,
+    message,
+    createdAt: new Date().toISOString(),
+    read: false,
+  });
+  if (userId === state.sessionUserId || userId === "admin") playNotificationSound();
+}
+
+function playNotificationSound() {
+  if (!soundUnlocked) return;
+  try {
+    const ctx = new (window.AudioContext || window.webkitAudioContext)();
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.frequency.value = 880;
+    gain.gain.value = 0.035;
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start();
+    setTimeout(() => {
+      osc.stop();
+      ctx.close();
+    }, 160);
+  } catch {
+    // Browser may block audio until user interacts.
+  }
+}
+
+function notificationsForUser(userId) {
+  return (state.notifications || [])
+    .filter((n) => n.userId === userId || n.userId === "admin")
+    .sort((a, b) => new Date(b.createdAt) - new Date(a.createdAt));
+}
+
+function distanceKm(aLat, aLng, bLat, bLng) {
+  const toRad = (v) => (Number(v) * Math.PI) / 180;
+  const r = 6371;
+  const dLat = toRad(bLat - aLat);
+  const dLng = toRad(bLng - aLng);
+  const x =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(aLat)) * Math.cos(toRad(bLat)) * Math.sin(dLng / 2) ** 2;
+  return 2 * r * Math.asin(Math.sqrt(x));
+}
+
+function nearestCollector(lat, lng) {
+  return getCollectors(state)
+    .filter((c) => c.lat && c.lng)
+    .map((c) => ({ collector: c, km: distanceKm(lat, lng, c.lat, c.lng) }))
+    .sort((a, b) => a.km - b.km)[0] || null;
+}
 
 function persist() {
   saveState(state);
@@ -76,6 +136,14 @@ function escapeHtml(s) {
     .replace(/>/g, "&gt;").replace(/"/g, "&quot;");
 }
 
+function updateLocationStatus(label = "") {
+  const el = document.querySelector("#location-status");
+  if (!el) return;
+  el.textContent = draftLocationSelected
+    ? `Selected: ${label || `${draftLat.toFixed(5)}, ${draftLng.toFixed(5)}`}`
+    : "Location not selected yet.";
+}
+
 // ——— ROLE GUARD: ensures each user only ever sees their own role's screens ———
 function assertRole(expected) {
   const user = currentUser();
@@ -101,7 +169,7 @@ function renderAuth() {
   main.innerHTML = `
     <div class="auth-hero">
       <span class="hero-icon">♻️</span>
-      <h1>BinRoute Ghana</h1>
+      <h1>Emtrash Pickup</h1>
       <p class="muted">Your bin is full? One tap and your collector is on the way.</p>
     </div>
 
@@ -111,16 +179,18 @@ function renderAuth() {
       <input id="resident-name" required placeholder="e.g. Ama Mensah" />
       <label for="resident-phone">Phone (Ghana)</label>
       <input id="resident-phone" required type="tel" placeholder="024 / 055 / 020" />
-      <label for="join-code">Collector code</label>
-      <input id="join-code" placeholder="e.g. KWAME1 — ask your collector" value="${escapeAttr(prefillJoin)}" />
-      <label for="pick-collector">Or pick your collector</label>
+      <label for="join-code">Collector code (optional)</label>
+      <input id="join-code" placeholder="Leave blank to find a nearby collector" value="${escapeAttr(prefillJoin)}" />
+      <label for="pick-collector">Or pick a collector</label>
       <select id="pick-collector">
         <option value="">— Select —</option>
       </select>
-      <label for="address">Home / pickup address</label>
-      <input id="address" required placeholder="Area, landmark, house number" />
-      <p class="muted">Drag the pin to your exact location.</p>
+      <label for="address">Home / pickup address or landmark</label>
+      <input id="address" required placeholder="e.g. Labone Coffee Shop, Osu Oxford Street" />
+      <button type="button" class="btn btn-secondary" id="btn-search-location">Search landmark on map</button>
+      <p class="muted">Tap the map or drag the pin to your exact pickup location.</p>
       <div id="map"></div>
+      <p class="muted" id="location-status">Location not selected yet.</p>
       <button type="button" class="btn btn-secondary" id="btn-gps">📍 Use my current location</button>
       <button type="submit" class="btn btn-primary">Join my collector</button>
     </form>
@@ -150,14 +220,17 @@ function renderAuth() {
       <input id="login-phone" type="tel" placeholder="Same number you used before" />
       <button type="button" class="btn btn-secondary" id="btn-login">Sign in</button>
     </div>
-    <p class="muted" style="margin-top:12px;font-size:0.75rem">
-      Demo — admin: <code>0500000000</code> · collector: <code>0241234567</code> · resident: <code>0559876543</code>
-    </p>
   `;
 
+  draftLocationSelected = false;
   mapRef = initMap("map", {
     lat: draftLat, lng: draftLng, draggable: true,
-    onMove: (la, ln) => { draftLat = la; draftLng = ln; },
+    onMove: (la, ln) => {
+      draftLat = la;
+      draftLng = ln;
+      draftLocationSelected = true;
+      updateLocationStatus();
+    },
   });
   refreshCollectorPicker();
 
@@ -171,9 +244,27 @@ function renderAuth() {
     try {
       const pos = await getCurrentPosition();
       draftLat = pos.lat; draftLng = pos.lng;
+      draftLocationSelected = true;
       if (mapRef?.marker) setMarkerPosition(mapRef.marker, draftLat, draftLng);
+      updateLocationStatus();
       showToast("Location updated");
     } catch { showToast("Could not get GPS — drag the pin instead"); }
+  });
+
+  main.querySelector("#btn-search-location")?.addEventListener("click", async () => {
+    const address = main.querySelector("#address").value.trim();
+    if (!address) { showToast("Enter a landmark or address first"); return; }
+    try {
+      showToast("Searching map...");
+      const result = await geocodeAddress(address);
+      draftLat = result.lat;
+      draftLng = result.lng;
+      draftLocationSelected = true;
+      if (mapRef?.marker) setMarkerPosition(mapRef.marker, draftLat, draftLng);
+      updateLocationStatus(result.label);
+    } catch (err) {
+      showToast(err.message || "Could not find that landmark");
+    }
   });
 
   main.querySelector("#resident-form").addEventListener("submit", (e) => {
@@ -193,13 +284,20 @@ function renderAuth() {
 
     const address = main.querySelector("#address").value.trim();
     const code = main.querySelector("#join-code").value.trim();
-    const collector = findCollectorByJoinCode(state, code);
-    if (!collector) { showToast("Invalid collector code — ask your collector"); return; }
     if (!address) { showToast("Enter your address"); return; }
+    if (!draftLocationSelected) { showToast("Tap the map or use GPS to select your pickup location"); return; }
+    let collector = code ? findCollectorByJoinCode(state, code) : null;
+    if (code && !collector) { showToast("Invalid collector code — leave blank to find a nearby collector"); return; }
+    if (!collector) {
+      const nearest = nearestCollector(draftLat, draftLng);
+      collector = nearest?.collector || null;
+      if (!collector) { showToast("No nearby collector found yet"); return; }
+    }
     state.users.push({
       id: uid(), role: "resident", name, phone, address,
       collectorId: collector.id, lat: draftLat, lng: draftLng,
     });
+    notifyUser(collector.id, `${name} joined your customer list`);
     showToast(`Joined ${collector.name}'s customers`);
 
     state.sessionUserId = state.users[state.users.length - 1].id;
@@ -233,6 +331,7 @@ function renderAuth() {
       serviceArea, joinCode, momoNumber: momo, momoNetwork,
       lat: draftLat, lng: draftLng,
     });
+    notifyUser("admin", `New collector registered: ${name}`);
     state.sessionUserId = state.users[state.users.length - 1].id;
     activeTab = "home";
     showToast(`Registered — your collector code is ${joinCode}`);
@@ -322,6 +421,10 @@ function renderResidentHome(user) {
         ${active.status === "en_route" ? `<p class="muted">Your collector is heading to you.</p>` : ""}
         ${active.status === "arrived" ? `<p class="muted">Collector is at your location — they'll set the price shortly.</p>` : ""}
         ${active.status === "payment_pending" ? `<p class="muted">Payment reference submitted. Your collector will confirm once the MoMo payment is received.</p>` : ""}
+        ${["accepted", "en_route", "arrived", "priced", "payment_pending"].includes(active.status) ? `
+          <div id="tracking-map"></div>
+          <p class="muted">Collector movement is estimated in-app. Live GPS tracking will require the collector phone to share location continuously.</p>
+        ` : ""}
 
         ${isPriced ? `
           <div class="price-reveal">
@@ -379,15 +482,23 @@ function renderPickupHistory(userId) {
 function bindResidentHome(user) {
   const main = document.getElementById("main");
   const collector = getAssignedCollector(state, user);
+  const active = activePickup(user.id);
+
+  if (active && collector && document.getElementById("tracking-map")) {
+    initTrackingMap("tracking-map", collector, user, active);
+  }
 
   main.querySelector("#btn-full")?.addEventListener("click", () => {
     if (!collector) { showToast("Link to a collector first (Location tab)"); return; }
     if (activePickup(user.id)) return;
     const note = main.querySelector("#req-note")?.value.trim() || "";
+    const pickupId = uid();
     state.pickups.push({
-      id: uid(), residentId: user.id, collectorId: collector.id,
+      id: pickupId, residentId: user.id, collectorId: collector.id,
       status: "requested", createdAt: new Date().toISOString(), note,
     });
+    notifyUser(collector.id, `${user.name} requested a pickup`, pickupId);
+    notifyUser("admin", `New pickup request from ${user.name}`, pickupId);
     showToast(`${collector.name} has been alerted 🔔`);
     persist();
   });
@@ -401,6 +512,8 @@ function bindResidentHome(user) {
     active.paymentSubmittedAt = new Date().toISOString();
     active.momoRef = ref;
     active.amountGhs = active.priceGhs;
+    notifyUser(active.collectorId, `${user.name} submitted MoMo ref ${ref}`, active.id);
+    notifyUser("admin", `${user.name} submitted payment reference`, active.id);
     showToast("Payment ref sent — waiting for collector confirmation");
     persist();
   });
@@ -413,6 +526,7 @@ function bindResidentHome(user) {
     }
     active.status = "cancelled";
     active.cancelledAt = new Date().toISOString();
+    notifyUser(active.collectorId, `${user.name} cancelled a pickup request`, active.id);
     showToast("Request cancelled");
     persist();
   });
@@ -426,10 +540,12 @@ function renderResidentProfile(user) {
       <h1>📍 My location</h1>
       ${collector ? `<p class="muted">Linked to <strong>${escapeHtml(collector.name)}</strong> (code <code>${collector.joinCode}</code>)</p>` : ""}
     </div>
-    <label>Address</label>
+    <label>Address or landmark</label>
     <input id="prof-address" value="${escapeAttr(user.address)}" />
+    <button type="button" class="btn btn-secondary" id="btn-search-profile-location">Search landmark on map</button>
     <p class="muted">Drag the pin to your exact gate / front door.</p>
     <div id="map"></div>
+    <p class="muted" id="location-status">Selected: ${Number(user.lat || CONFIG.defaultCenter.lat).toFixed(5)}, ${Number(user.lng || CONFIG.defaultCenter.lng).toFixed(5)}</p>
     <button type="button" class="btn btn-secondary" id="btn-gps">📍 Use GPS</button>
     <button type="button" class="btn btn-primary" id="btn-save-profile">Save location</button>
 
@@ -446,20 +562,44 @@ function renderResidentProfile(user) {
 function bindResidentProfile(user) {
   draftLat = user.lat || CONFIG.defaultCenter.lat;
   draftLng = user.lng || CONFIG.defaultCenter.lng;
+  draftLocationSelected = Boolean(user.lat && user.lng);
   mapRef = initMap("map", {
     lat: draftLat, lng: draftLng, draggable: true,
-    onMove: (la, ln) => { draftLat = la; draftLng = ln; },
+    onMove: (la, ln) => {
+      draftLat = la;
+      draftLng = ln;
+      draftLocationSelected = true;
+      updateLocationStatus();
+    },
   });
   const main = document.getElementById("main");
+  main.querySelector("#btn-search-profile-location")?.addEventListener("click", async () => {
+    const address = main.querySelector("#prof-address").value.trim();
+    if (!address) { showToast("Enter a landmark or address first"); return; }
+    try {
+      showToast("Searching map...");
+      const result = await geocodeAddress(address);
+      draftLat = result.lat;
+      draftLng = result.lng;
+      draftLocationSelected = true;
+      setMarkerPosition(mapRef?.marker, draftLat, draftLng);
+      updateLocationStatus(result.label);
+    } catch (err) {
+      showToast(err.message || "Could not find that landmark");
+    }
+  });
   main.querySelector("#btn-gps").addEventListener("click", async () => {
     try {
       const pos = await getCurrentPosition();
       draftLat = pos.lat; draftLng = pos.lng;
+      draftLocationSelected = true;
       setMarkerPosition(mapRef?.marker, draftLat, draftLng);
+      updateLocationStatus();
       showToast("Location updated");
     } catch { showToast("GPS unavailable — drag the pin"); }
   });
   main.querySelector("#btn-save-profile").addEventListener("click", () => {
+    if (!draftLocationSelected) { showToast("Tap the map, search a landmark, or use GPS first"); return; }
     user.address = main.querySelector("#prof-address").value.trim();
     user.lat = draftLat; user.lng = draftLng;
     showToast("Location saved ✓");
@@ -538,7 +678,7 @@ function renderCollectorPickupRow(p) {
 
       <div class="pickup-actions">
         <button type="button" class="btn btn-secondary btn-sm btn-nav"
-          data-lat="${resident.lat}" data-lng="${resident.lng}">🗺️ Navigate</button>
+          data-lat="${resident.lat}" data-lng="${resident.lng}">🗺️ Open route</button>
 
         ${p.status === "requested"
           ? `<button type="button" class="btn btn-primary btn-sm btn-accept">Accept</button>
@@ -583,6 +723,8 @@ function bindCollectorHome(user) {
       if (p) {
         p.status = "accepted";
         p.acceptedAt = new Date().toISOString();
+        notifyUser(p.residentId, "Your collector accepted your pickup request", p.id);
+        notifyUser("admin", `${user.name} accepted a pickup request`, p.id);
         showToast("Request accepted");
         persist();
       }
@@ -596,6 +738,8 @@ function bindCollectorHome(user) {
         p.status = "cancelled";
         p.cancelledAt = new Date().toISOString();
         p.cancelledBy = user.id;
+        notifyUser(p.residentId, "Your collector declined the pickup request", p.id);
+        notifyUser("admin", `${user.name} declined a pickup request`, p.id);
         showToast("Request declined");
         persist();
       }
@@ -605,14 +749,24 @@ function bindCollectorHome(user) {
   main.querySelectorAll(".btn-enroute").forEach((btn) => {
     btn.addEventListener("click", () => {
       const p = state.pickups.find((x) => x.id === btn.closest("li").dataset.pickupId);
-      if (p) { p.status = "en_route"; showToast("Resident sees you're on the way 🚛"); persist(); }
+      if (p) {
+        p.status = "en_route";
+        notifyUser(p.residentId, "Your collector is on the way", p.id);
+        showToast("Resident sees you're on the way 🚛");
+        persist();
+      }
     });
   });
 
   main.querySelectorAll(".btn-arrived").forEach((btn) => {
     btn.addEventListener("click", () => {
       const p = state.pickups.find((x) => x.id === btn.closest("li").dataset.pickupId);
-      if (p) { p.status = "arrived"; showToast("Arrival confirmed — set the price after inspection"); persist(); }
+      if (p) {
+        p.status = "arrived";
+        notifyUser(p.residentId, "Your collector has arrived", p.id);
+        showToast("Arrival confirmed — set the price after inspection");
+        persist();
+      }
     });
   });
 
@@ -641,6 +795,8 @@ function bindCollectorHome(user) {
       p.status = "priced";
       p.priceGhs = price;
       p.pricedAt = new Date().toISOString();
+      notifyUser(p.residentId, `Pickup price set at ${formatGhs(price)}`, p.id);
+      notifyUser("admin", `${user.name} set pickup price at ${formatGhs(price)}`, p.id);
       showToast(`Price set to ${formatGhs(price)} — resident will be prompted to pay`);
       persist();
     });
@@ -655,6 +811,8 @@ function bindCollectorHome(user) {
       p.paidAt = new Date().toISOString();
       p.confirmedByCollectorAt = new Date().toISOString();
       p.amountGhs = p.amountGhs || p.priceGhs;
+      notifyUser(p.residentId, "Payment confirmed. Pickup completed", p.id);
+      notifyUser("admin", `${user.name} confirmed payment received`, p.id);
       showToast("Payment confirmed — pickup completed");
       persist();
     });
@@ -738,7 +896,7 @@ function renderCollectorEarnings(user) {
     <div class="card">
       <p class="muted">Total after ${CONFIG.platformFeePercent}% platform fee</p>
       <p class="money" style="font-size:1.8rem">${formatGhs(total)}</p>
-      <p class="fee-note">BinRoute platform share: ${formatGhs(platform)}</p>
+      <p class="fee-note">Emtrash platform share: ${formatGhs(platform)}</p>
     </div>
 
     <h2>Paid pickups</h2>
@@ -898,6 +1056,21 @@ function renderAdminUsers() {
   `;
 }
 
+function renderNotifications(user) {
+  const items = notificationsForUser(user.id);
+  return `
+    <div class="screen-header">
+      <h1>Activity</h1>
+      <p class="muted">Recent updates for ${escapeHtml(user.name)}.</p>
+    </div>
+    ${items.length ? `<ul class="pickup-list">${items.slice(0, 30).map((n) => `
+      <li>
+        <strong>${escapeHtml(n.message)}</strong>
+        <p class="muted">${new Date(n.createdAt).toLocaleString()}</p>
+      </li>`).join("")}</ul>` : `<p class="empty-state">No activity yet.</p>`}
+  `;
+}
+
 // ——— Nav + Shell ———
 
 function renderNav(user) {
@@ -910,17 +1083,20 @@ function renderNav(user) {
         { id: "home",     icon: "📊", label: "Overview" },
         { id: "requests", icon: "🧾", label: "Requests" },
         { id: "users",    icon: "👥", label: "Network" },
+        { id: "activity", icon: "🔔", label: "Activity" },
       ]
     : user.role === "collector"
       ? [
         { id: "home",     icon: "🗺️",  label: "Route" },
         { id: "group",    icon: "👥",  label: "My group" },
         { id: "earnings", icon: "💰",  label: "Earnings" },
+        { id: "activity", icon: "🔔",  label: "Activity" },
         { id: "settings", icon: "⚙️",  label: "Settings" },
       ]
       : [
         { id: "home",    icon: "🏠", label: "Home" },
         { id: "profile", icon: "📍", label: "Location" },
+        { id: "activity", icon: "🔔", label: "Activity" },
       ];
 
   nav.innerHTML = tabs.map((t) => `
@@ -950,6 +1126,8 @@ function renderApp() {
       main.innerHTML = renderAdminRequests();
     } else if (activeTab === "users") {
       main.innerHTML = renderAdminUsers();
+    } else if (activeTab === "activity") {
+      main.innerHTML = renderNotifications(user);
     } else {
       activeTab = "home";
       main.innerHTML = renderAdminDashboard(user);
@@ -959,6 +1137,8 @@ function renderApp() {
     if (activeTab === "profile") {
       main.innerHTML = renderResidentProfile(user);
       bindResidentProfile(user);
+    } else if (activeTab === "activity") {
+      main.innerHTML = renderNotifications(user);
     } else {
       activeTab = "home";
       main.innerHTML = renderResidentHome(user);
@@ -974,6 +1154,8 @@ function renderApp() {
     } else if (activeTab === "settings") {
       main.innerHTML = renderCollectorSettings(user);
       bindCollectorSettings(user);
+    } else if (activeTab === "activity") {
+      main.innerHTML = renderNotifications(user);
     } else {
       activeTab = "home";
       main.innerHTML = renderCollectorHome(user);
@@ -986,6 +1168,10 @@ function render() { renderApp(); }
 
 document.getElementById("btn-logout").addEventListener("click", () => {
   state.sessionUserId = null; activeTab = "home"; persist();
+});
+
+["pointerdown", "keydown"].forEach((eventName) => {
+  window.addEventListener(eventName, () => { soundUnlocked = true; }, { once: true });
 });
 
 render();
