@@ -1,9 +1,9 @@
--- BinRoute MVP Supabase setup
+-- Emtrash Pickup MVP Supabase setup
 -- Run this in Supabase Dashboard > SQL Editor.
 
 create table if not exists public.app_state (
   id text primary key,
-  state jsonb not null default '{"users":[],"pickups":[]}'::jsonb,
+  state jsonb not null default '{"users":[],"pickups":[],"notifications":[]}'::jsonb,
   updated_at timestamptz not null default now()
 );
 
@@ -52,7 +52,7 @@ values (
       {
         "id": "admin_demo",
         "role": "admin",
-        "name": "BinRoute Operator",
+        "name": "Emtrash Operator",
         "phone": "0500000000"
       },
       {
@@ -95,7 +95,8 @@ values (
         "priceGhs": 8,
         "pricedAt": "2026-06-05T00:45:00.000Z"
       }
-    ]
+    ],
+    "notifications": []
   }'::jsonb
 )
 on conflict (id) do nothing;
