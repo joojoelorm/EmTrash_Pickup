@@ -1,4 +1,4 @@
-﻿import { CONFIG } from "./config.js";
+import { CONFIG } from "./config.js";
 
 let mapInstance = null;
 
@@ -29,6 +29,11 @@ export function initMap(containerId, { lat, lng, draggable = false, onMove }) {
       const { lat: la, lng: ln } = marker.getLatLng();
       onMove(la, ln);
     });
+
+    mapInstance.on("click", (e) => {
+      marker.setLatLng(e.latlng);
+      onMove(e.latlng.lat, e.latlng.lng);
+    });
   }
 
   setTimeout(() => mapInstance.invalidateSize(), 200);
@@ -38,6 +43,26 @@ export function initMap(containerId, { lat, lng, draggable = false, onMove }) {
 export function setMarkerPosition(marker, lat, lng) {
   if (marker) marker.setLatLng([lat, lng]);
   if (mapInstance) mapInstance.setView([lat, lng], mapInstance.getZoom());
+}
+
+export async function geocodeAddress(query) {
+  const q = String(query || "").trim();
+  if (!q) throw new Error("Enter a landmark or address");
+  const url = new URL("https://nominatim.openstreetmap.org/search");
+  url.searchParams.set("format", "json");
+  url.searchParams.set("limit", "1");
+  url.searchParams.set("countrycodes", "gh");
+  url.searchParams.set("q", q);
+
+  const res = await fetch(url.toString());
+  if (!res.ok) throw new Error("Location search failed");
+  const [match] = await res.json();
+  if (!match) throw new Error("No matching location found");
+  return {
+    lat: Number(match.lat),
+    lng: Number(match.lon),
+    label: match.display_name,
+  };
 }
 
 export function initCollectorMap(containerId, pickups, users) {
@@ -81,6 +106,53 @@ export function initCollectorMap(containerId, pickups, users) {
 export function openDirections(lat, lng) {
   const url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
   window.open(url, "_blank", "noopener,noreferrer");
+}
+
+export function initTrackingMap(containerId, collector, resident, pickup) {
+  destroyMap();
+  const el = document.getElementById(containerId);
+  if (!el || typeof L === "undefined" || !resident?.lat || !resident?.lng) return null;
+
+  const start = [
+    Number(collector?.lat ?? CONFIG.defaultCenter.lat),
+    Number(collector?.lng ?? CONFIG.defaultCenter.lng),
+  ];
+  const end = [Number(resident.lat), Number(resident.lng)];
+  mapInstance = L.map(containerId).setView(end, CONFIG.defaultCenter.zoom);
+
+  L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+    attribution: "© OpenStreetMap",
+    maxZoom: 19,
+  }).addTo(mapInstance);
+
+  L.polyline([start, end], { color: "#12875a", weight: 4, opacity: 0.75 }).addTo(mapInstance);
+  L.marker(end).addTo(mapInstance).bindPopup("Pickup location");
+
+  const statusProgress = {
+    requested: 0,
+    accepted: 0.2,
+    en_route: 0.55,
+    arrived: 1,
+    priced: 1,
+    payment_pending: 1,
+    paid: 1,
+  };
+  const progress = statusProgress[pickup?.status] ?? 0;
+  const rider = [
+    start[0] + (end[0] - start[0]) * progress,
+    start[1] + (end[1] - start[1]) * progress,
+  ];
+  L.circleMarker(rider, {
+    radius: 10,
+    fillColor: "#0d5c3d",
+    color: "#fff",
+    weight: 2,
+    fillOpacity: 0.95,
+  }).addTo(mapInstance).bindPopup("Collector position estimate");
+
+  mapInstance.fitBounds([start, end], { padding: [30, 30] });
+  setTimeout(() => mapInstance.invalidateSize(), 200);
+  return mapInstance;
 }
 
 export function getCurrentPosition() {
