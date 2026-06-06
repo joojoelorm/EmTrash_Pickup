@@ -1,4 +1,4 @@
-﻿:root {
+:root {
   --green-900: #0d5c3d;
   --green-700: #12875a;
   --green-100: #e8f5ef;
@@ -206,6 +206,7 @@ textarea { min-height: 72px; resize: vertical; }
 /* ── Map ── */
 #map { height: 220px; border-radius: var(--radius); margin-bottom: 12px; z-index: 1; }
 #collector-map { height: 260px; border-radius: var(--radius); margin-bottom: 12px; }
+#tracking-map { height: 220px; border-radius: var(--radius); margin: 12px 0; z-index: 1; }
 
 /* ── Pickup list ── */
 .pickup-list { list-style: none; padding: 0; margin: 0; }
