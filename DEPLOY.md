@@ -1,4 +1,4 @@
-# Deploy BinRoute for Free
+# Deploy Emtrash Pickup for Free
 
 This version can run as a static mobile-first web app on GitHub Pages with Supabase Free as the shared database.
 
@@ -46,7 +46,7 @@ Create a GitHub repository, then from the `binroute` folder:
 ```bash
 git init
 git add .
-git commit -m "Deploy BinRoute MVP"
+git commit -m "Deploy Emtrash Pickup MVP"
 git branch -M main
 git remote add origin https://github.com/YOUR_USERNAME/binroute.git
 git push -u origin main
