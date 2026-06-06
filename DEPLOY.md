@@ -52,7 +52,20 @@ git remote add origin https://github.com/YOUR_USERNAME/binroute.git
 git push -u origin main
 ```
 
-## 4. Enable GitHub Pages
+## 4. Optional: add Geoapify for better landmark search
+
+1. Go to https://www.geoapify.com/.
+2. Create a free account.
+3. Copy your API key.
+4. Paste it into `js/geo-config.js`:
+
+```js
+export const GEO_CONFIG = {
+  geoapifyKey: "YOUR_GEOAPIFY_KEY",
+};
+```
+
+## 5. Enable GitHub Pages
 
 1. Open the GitHub repo.
 2. Go to **Settings > Pages**.
@@ -67,7 +80,7 @@ Your app will appear at:
 https://YOUR_USERNAME.github.io/binroute/
 ```
 
-## 5. MVP payment setup
+## 6. MVP payment setup
 
 For launch, use the manual MoMo flow:
 
