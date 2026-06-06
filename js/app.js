@@ -6,7 +6,7 @@ import {
 } from "./storage.js";
 import { getAssignedCollector, joinLink, joinCodeFromUrl, pickupsForCollector } from "./assign.js";
 import {
-  destroyMap, initMap, setMarkerPosition, initCollectorMap, initTrackingMap, openDirections, getCurrentPosition, geocodeAddress,
+  destroyMap, initMap, setMarkerPosition, initCollectorMap, openDirections, getCurrentPosition, geocodeAddress,
 } from "./map.js";
 
 let state = seedDemoIfEmpty(loadState());
@@ -87,6 +87,36 @@ function nearestCollector(lat, lng) {
     .filter((c) => c.lat && c.lng)
     .map((c) => ({ collector: c, km: distanceKm(lat, lng, c.lat, c.lng) }))
     .sort((a, b) => a.km - b.km)[0] || null;
+}
+
+function pickupProgressPercent(status) {
+  return {
+    requested: 5,
+    accepted: 25,
+    en_route: 62,
+    arrived: 100,
+    priced: 100,
+    payment_pending: 100,
+    paid: 100,
+  }[status] ?? 0;
+}
+
+function renderPickupProgress(pickup) {
+  const pct = pickupProgressPercent(pickup.status);
+  return `
+    <div class="route-progress" aria-label="Pickup progress">
+      <div class="route-line">
+        <span class="route-dot home-dot">🏠</span>
+        <span class="route-fill" style="width:${pct}%"></span>
+        <span class="route-rider" style="left:${pct}%">🛵</span>
+        <span class="route-dot collector-dot">♻️</span>
+      </div>
+      <div class="route-labels">
+        <span>Collector</span>
+        <span>${pct >= 100 ? "Arrived" : `${pct}% closer`}</span>
+        <span>You</span>
+      </div>
+    </div>`;
 }
 
 function persist() {
@@ -422,8 +452,8 @@ function renderResidentHome(user) {
         ${active.status === "arrived" ? `<p class="muted">Collector is at your location — they'll set the price shortly.</p>` : ""}
         ${active.status === "payment_pending" ? `<p class="muted">Payment reference submitted. Your collector will confirm once the MoMo payment is received.</p>` : ""}
         ${["accepted", "en_route", "arrived", "priced", "payment_pending"].includes(active.status) ? `
-          <div id="tracking-map"></div>
-          <p class="muted">Collector movement is estimated in-app. Live GPS tracking will require the collector phone to share location continuously.</p>
+          ${renderPickupProgress(active)}
+          <p class="muted">Movement is estimated by pickup status. Live movement will require the collector phone to share GPS updates.</p>
         ` : ""}
 
         ${isPriced ? `
@@ -482,11 +512,6 @@ function renderPickupHistory(userId) {
 function bindResidentHome(user) {
   const main = document.getElementById("main");
   const collector = getAssignedCollector(state, user);
-  const active = activePickup(user.id);
-
-  if (active && collector && document.getElementById("tracking-map")) {
-    initTrackingMap("tracking-map", collector, user, active);
-  }
 
   main.querySelector("#btn-full")?.addEventListener("click", () => {
     if (!collector) { showToast("Link to a collector first (Location tab)"); return; }
