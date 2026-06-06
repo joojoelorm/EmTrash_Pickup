@@ -1,9 +1,19 @@
-# BinRoute Ghana
+# Emtrash Pickup
 
 Static prototype for resident waste pickup requests and collector route handling.
 This version can run on GitHub Pages with Supabase Free, or locally with the included Node backend.
 
 For deployment steps, see `DEPLOY.md`.
+
+## Better landmark search
+
+For stronger landmark/address search during customer testing, create a free Geoapify account and paste the API key in:
+
+```text
+js/geo-config.js
+```
+
+If no Geoapify key is set, the app falls back to OpenStreetMap/Nominatim search.
 
 ## Run locally
 
@@ -21,15 +31,6 @@ node server.mjs
 
 If Node is not installed, `start-server.bat` falls back to Python at `http://localhost:8080`.
 The Python fallback serves the static prototype only. For shared online data, configure Supabase in `js/supabase-config.js`.
-
-## Demo accounts
-
-- Admin/operator: `0500000000`
-- Collector: `0241234567`
-- Resident: `0559876543`
-- Resident: `0201122334`
-
-New residents can join the demo collector with code `KWAME1`.
 
 ## Current workflow
 
